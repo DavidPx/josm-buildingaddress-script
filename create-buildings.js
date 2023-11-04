@@ -15,8 +15,7 @@ const parcelLayer = josm.layers.get("V900_Wisconsin_Parcels_OZAUKEE.geojson");
 const buildingDataSet = buildingLayer.getDataSet();
 const selectedBuildings = buildingDataSet.getAllSelected();
 
-if (selectedBuildings.length === 0)
-{
+if (selectedBuildings.length === 0) {
 	throw new Error("Nothing Selected");
 }
 
@@ -65,86 +64,87 @@ if (ourCity === null) {
 	throw Error("City not found!");
 }
 
-console.println(`we are in city ${ourCity.get("name")}`);
+const buildingsToTouch = selectedBuildings.toArray().filter(x => x.getType() == OsmPrimitiveType.WAY && x.isClosed() && !x.hasKey("addr:housenumber"));
 
 // batch the building updates
 buildingDataSetUtil.batch(() => {
-	for (const building of selectedBuildings) {
-	if (building.getType() !== OsmPrimitiveType.WAY || !building.isClosed()) continue;
+	for (const building of buildingsToTouch) {
 
-	for (const candidate of candidateParcels) {
-		const result = Geometry.polygonIntersection(Geometry.getArea(building.getNodes()), Geometry.getArea(candidate.getNodes()));
-	
-		if (result === PolygonIntersection.FIRST_INSIDE_SECOND) {
-			const tags = candidate.getKeys();
-			const siteAddress = tags["SITEADRESS"];
-			console.println(siteAddress);
+		for (const candidate of candidateParcels) {
+			const result = Geometry.polygonIntersection(Geometry.getArea(building.getNodes()), Geometry.getArea(candidate.getNodes()));
 
-			const prefix = lookupPrefix(tags["PREFIX"]);
+			if (result === PolygonIntersection.FIRST_INSIDE_SECOND) {
+				const tags = candidate.getKeys();
+				const siteAddress = tags["SITEADRESS"];
+				console.println(siteAddress);
 
-			// Find the highway in the dataset.  OSM uses full street names instead of abbreviations
-			const startsWithMatches = workingDataSetUtil.query(`type:way AND highway AND name~${tags["STREETNAME"]}.*`).map(x => x.get("name")).reduce((acc, curr) => { 
-				if (!acc.includes(curr)) {
-					acc.push(curr);
-				} 
-				return acc;
-				}, []);
-			
-			let roadName = null;
+				const prefix = lookupPrefix(tags["PREFIX"]);
+				const streetName = tags["STREETNAME"];
+				const streetNameNoSpaces = streetName.replace(" ", "");
+				const streetType = tags["STREETTYPE"];
 
-			if (startsWithMatches.length === 1) {
-				roadName = startsWithMatches[0];
-			}
-			else {
-				const fuzzyMatches = workingDataSetUtil.query(`type:way AND highway AND name:${tags["STREETNAME"]}`);
+				const nameQueries = [`name~"${prefix} ${streetName} ${streetType}"`, `name~"${prefix} ${streetNameNoSpaces} ${streetType}"`, `name:"${streetName} ${streetType}"`, `name:"${streetNameNoSpaces} ${streetType}"`];
+				let roadName = null;
 
-				const roadNames = fuzzyMatches.map(x => x.get("name")).reduce((acc, curr) => { 
+				for (const nameQuery of nameQueries) {
+					const matches = workingDataSetUtil.query(`type:way AND highway AND ${nameQuery}`).map(x => x.get("name")).reduce((acc, curr) => {
 					if (!acc.includes(curr)) {
 						acc.push(curr);
-					} 
-					return acc;
-					}, []);
-				if (roadNames.length === 0) {
-					console.println(`Unable to find a road, skipping`);
-					continue
-				}
-				else if (roadNames.length > 1) {
-					
-					console.println(`Multiple road matches! Narrowing by prefix: ${roadNames}`);
-					const betterMatch = roadNames.filter(x => x.startsWith(prefix));
-					if (betterMatch.length === 1) {
-						roadName = betterMatch[0];
-						console.println(`got a road! ${roadName}`);
 					}
-					else if (betterMatch.length > 1) {
-						console.println("Still multiple possibilities; skipping.");
-						console.println(betterMatch.join(","));
-						continue;
+					return acc;
+				}, []);
+					if (matches.length === 1)
+					{
+						roadName = matches[0];
+						console.println(`${nameQuery} had one match!`);
+						break;
+					}
+					else if (matches.length > 1) {
+						console.println(`multiple matches for ${nameQuery}! ${matches}`);
 					}
 					else {
-						console.println("Filtering by prefix failed to find a match");
-						continue;
+						console.println(`no matches for ${nameQuery}`);
 					}
 				}
-				else {
-					roadName = fuzzyMatches[0].get("name");
-					console.println(`got a road!  ${roadName}`);
-				}
-			}
 
-			building.setKeys(null);
-			
-			building.put("addr:city", ourCity.get("name"));
-			building.put("addr:postcode", tags["ZIPCODE"]);
-			building.put("addr:street", roadName);
-			building.put("addr:housenumber", tags["ADDNUM"]);
-			building.put("building", "yes");
+				if (roadName === null) {
+					buildingDataSet.clearSelection(building);
+					continue;
+				};
+
+				// Find the highway in the dataset.  OSM uses full street names instead of abbreviations
+				const startsWithMatches = workingDataSetUtil.query(`type:way AND highway AND name~"${prefix} ${streetName}.*"`).map(x => x.get("name")).reduce((acc, curr) => {
+					if (!acc.includes(curr)) {
+						acc.push(curr);
+					}
+					return acc;
+				}, []);
+
+				building.setKeys(null);
+
+				building.put("addr:city", ourCity.get("name"));
+				building.put("addr:postcode", tags["ZIPCODE"]);
+				building.put("addr:street", roadName);
+				building.put("addr:housenumber", tags["ADDNUM"]);
+				building.put("building", "yes");
+			}
 		}
 	}
-}
 });
 
 // merge selected to the working layer
 // https://josm.openstreetmap.de/browser/josm/trunk/src/org/openstreetmap/josm/actions/MergeSelectionAction.java#L43
 const builder = new MergeSourceBuildingVisitor(buildingDataSet);
 workingLayer.mergeFrom(builder.build());
+
+// delete the selected buildings - these will have been merged over.  Any failures will have been unselected
+const allNodes = buildingDataSet
+	.getAllSelected()
+	.toArray()
+	.reduce((acc, curr) => {
+		acc.push(curr.getNodes()); 
+		return acc;
+	},[]);
+
+buildingDataSetUtil.remove(allNodes);
+buildingDataSetUtil.remove(buildingDataSet.getAllSelected()); // all ways
