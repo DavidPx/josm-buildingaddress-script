@@ -1,4 +1,4 @@
-import josm from 'josm'
+const ArrayList = Java.type('java.util.ArrayList');
 
 const streetPrefixes = new Map();
 streetPrefixes.set('W', 'West');
@@ -10,3 +10,10 @@ export const lookupPrefix = x => {
 	if (streetPrefixes.has(x)) return streetPrefixes.get(x);
 	return null;
 };
+
+// Creates a Java ArrayList from a JS array
+export const toArrayList = x => {
+    const list = new ArrayList();
+    x.forEach(o => list.add(o));
+    return list;
+}
