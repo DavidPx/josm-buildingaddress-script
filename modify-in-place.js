@@ -1,71 +1,50 @@
 import josm from 'josm'
 import * as console from 'josm/scriptingconsole'
 import { DataSetUtil } from 'josm/ds'
-import {
-	buildChangeCommand
-} from 'josm/command'
+import { buildChangeCommand } from 'josm/command'
+import { lookupPrefix } from 'utility';
 
 const OsmPrimitiveType = Java.type('org.openstreetmap.josm.data.osm.OsmPrimitiveType');
 const BBox = Java.type('org.openstreetmap.josm.data.osm.BBox');
 const Geometry = Java.type('org.openstreetmap.josm.tools.Geometry');
 const PolygonIntersection = Java.type('org.openstreetmap.josm.tools.Geometry.PolygonIntersection');
 
-const buildingLayer = josm.layers.activeLayer;
+const activeLayer = josm.layers.activeLayer;
 const parcelLayer = josm.layers.get("V900_Wisconsin_Parcels_OZAUKEE.geojson");
 
-const buildingDataSet = buildingLayer.getDataSet();
-const selectedBuildings = buildingDataSet.getAllSelected();
+const activeDataSet = activeLayer.getDataSet();
+const selectedBuildings = activeDataSet.getAllSelected().toArray();
 
 if (selectedBuildings.length === 0) {
 	throw new Error("Nothing Selected");
 }
 
-const streetPrefixes = new Map();
-streetPrefixes.set('W', 'West');
-streetPrefixes.set('E', 'East');
-streetPrefixes.set('N', 'North');
-streetPrefixes.set('S', 'South');
-
-const lookupPrefix = x => {
-	if (streetPrefixes.has(x)) return streetPrefixes.get(x);
-	return null;
-};
-
 const parcelData = parcelLayer.getDataSet();
 
 // accumulate the BBoxes of our buildings in order to narrow down the parcel search
-let bigBBox = null;
-for (const building of selectedBuildings) {
-	if (bigBBox === null) {
-		bigBBox = new BBox(building);
-	}
-	else {
-		// TODO: be more accurate with this.  Don't exapnd with each building, just do one at the end of the list.
-		bigBBox.addPrimitive(building, 0.0005);
-	}
+let bigBBox = new BBox();
+for (let i = 0; i < selectedBuildings.length; ++i) {
+	const building = selectedBuildings[i];
+	const extra = i === selectedBuildings.length - 1 ? 0.005 : 0;
+	bigBBox.addPrimitive(building, extra);
 }
 
 const candidateParcels = parcelData.searchWays(bigBBox);
 
-const buildingDataSetUtil = new DataSetUtil(buildingDataSet);
+const buildingDataSetUtil = new DataSetUtil(activeDataSet);
 
 // find what city we're in.  This will likely break if working on the boundary.  Use an intersection test instead?  But then you'd get multiple matches.
 const cityMatches = buildingDataSetUtil.query("type:relation AND admin_level=8");
-let ourCity = null;
 
-for (const cityRelation of cityMatches) {
-	if (cityRelation.getBBox().bounds(bigBBox)) {
-		ourCity = cityRelation;
-		break;
-	}
+const getParcelCity = way => {
+	const match = cityMatches.find(x => x.getBBox().bounds(way.getBBox()));
+	if (match !== null) return match.get("name");
+	return null;
 }
 
-if (ourCity === null) {
-	throw Error("City not found!");
-}
-
-const buildingsToTouch = selectedBuildings.toArray().filter(x => x.getType() == OsmPrimitiveType.WAY && x.isClosed());
+const buildingsToTouch = selectedBuildings.filter(x => x.getType() == OsmPrimitiveType.WAY && x.isClosed());
 const touchedBuildings = [];
+const streetCache = [];
 
 for (const building of buildingsToTouch) {
 
@@ -75,43 +54,66 @@ for (const building of buildingsToTouch) {
 		if (result === PolygonIntersection.FIRST_INSIDE_SECOND) {
 			const tags = candidate.getKeys();
 			const siteAddress = tags["SITEADRESS"];
+			if (!siteAddress) {
+				console.println(`parcel with no address!  skipping.  Building center is ${building.getBBox().getCenter()}`);
+				continue;
+			}
 			console.println(siteAddress);
 
 			const prefix = lookupPrefix(tags["PREFIX"]);
 			const streetName = tags["STREETNAME"];
 			const streetNameNoSpaces = streetName.replace(" ", "");
 			const streetType = tags["STREETTYPE"];
+			const cacheKey = `${prefix} ${streetName} ${streetType}`;
 
-			const nameQueries = [`name~"${prefix} ${streetName} ${streetType}"`, `name~"${prefix} ${streetNameNoSpaces} ${streetType}"`, `name:"${streetName} ${streetType}"`, `name:"${streetNameNoSpaces} ${streetType}"`];
+			const nameQueries = [
+				`name~"${prefix} ${streetName} ${streetType}"`,
+				`name~"${prefix} ${streetNameNoSpaces} ${streetType}"`,
+				`name~"${streetName} ${streetType}"`,
+				`name~"${streetNameNoSpaces} ${streetType}"`
+			];
 			let roadName = null;
 
-			for (const nameQuery of nameQueries) {
-				const matches = buildingDataSetUtil.query(`type:way AND highway AND ${nameQuery}`).map(x => x.get("name")).reduce((acc, curr) => {
-					if (!acc.includes(curr)) {
-						acc.push(curr);
+			const cached = streetCache.find(x => x.parcel === cacheKey);
+			if (cached) {
+				roadName = cached.osm;
+			}
+			else {
+				for (const nameQuery of nameQueries) {
+
+					const matches = buildingDataSetUtil.query(`type:way AND highway AND ${nameQuery}`).map(x => x.get("name")).reduce((acc, curr) => {
+						if (!acc.includes(curr)) {
+							acc.push(curr);
+						}
+						return acc;
+					}, []);
+					if (matches.length === 1) {
+						roadName = matches[0];
+						streetCache.push({ parcel: cacheKey, osm: roadName });
+						break;
 					}
-					return acc;
-				}, []);
-				if (matches.length === 1) {
-					roadName = matches[0];
-					console.println(`${nameQuery} had one match!`);
-					break;
-				}
-				else if (matches.length > 1) {
-					console.println(`multiple matches for ${nameQuery}! ${matches}`);
-				}
-				else {
-					console.println(`no matches for ${nameQuery}`);
+					else if (matches.length > 1) {
+						//console.println(`multiple matches for ${nameQuery}! ${matches}`);
+					}
+					else {
+						//console.println(`no matches for ${nameQuery}`);
+					}
 				}
 			}
 
 			if (roadName === null) {
-				console.println(`skipping`);
+				console.println(`!!! skipping`);
 				continue;
 			};
 
+			const cityName = getParcelCity(building);
+			if (!cityName) {
+				console.println(`Could not determine city; relationship needs to be downloaded`);
+				continue;
+			}
+
 			const newTags = {
-				"addr:city": ourCity.get("name"),
+				"addr:city": cityName,
 				"addr:postcode": tags["ZIPCODE"],
 				"addr:street": roadName,
 				"addr:housenumber": tags["ADDNUM"],
@@ -123,7 +125,7 @@ for (const building of buildingsToTouch) {
 
 			buildChangeCommand(building, {
 				tags: newTags
-			}).applyTo(buildingLayer);
+			}).applyTo(activeLayer);
 
 			// MS Building Outline data has these foreign tags
 			building.remove("capture_dates_range");
@@ -135,7 +137,7 @@ for (const building of buildingsToTouch) {
 }
 
 // redo the selection in order to JOSM to recognize changed ways; this lets us easily do "upload selected"
-buildingDataSet.clearSelection();
-buildingDataSet.setSelected(touchedBuildings);
+activeDataSet.clearSelection();
+activeDataSet.setSelected(touchedBuildings);
 
 console.println(`Done!`);
