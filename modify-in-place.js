@@ -4,6 +4,7 @@ import { DataSetUtil } from 'josm/ds'
 import { buildChangeCommand } from 'josm/command'
 import { lookupPrefix } from 'utility';
 
+
 const OsmPrimitiveType = Java.type('org.openstreetmap.josm.data.osm.OsmPrimitiveType');
 const BBox = Java.type('org.openstreetmap.josm.data.osm.BBox');
 const Geometry = Java.type('org.openstreetmap.josm.tools.Geometry');
@@ -38,18 +39,17 @@ const cityMatches = buildingDataSetUtil.query("type:relation AND admin_level=8")
 
 const getParcelCity = way => {
 	const match = cityMatches.find(x => x.getBBox().bounds(way.getBBox()));
-	if (match !== null) return match.get("name");
+	if (match) return match.get("name");
 	return null;
 }
 
-const buildingsToTouch = selectedBuildings.filter(x => x.getType() == OsmPrimitiveType.WAY && x.isClosed());
+const buildingsToTouch = selectedBuildings.filter(x => x.getType() == OsmPrimitiveType.WAY && x.isClosed() && !x.get("highway"));
 const touchedBuildings = [];
 const streetCache = [];
 
 for (const building of buildingsToTouch) {
 
 	const buildingArea = Geometry.getArea(building.getNodes());
-	console.println(`area keys: ${Object.keys(buildingArea)}`);
 	const touchingParcels = [];
 	let goodParcel = null;
 
@@ -60,7 +60,7 @@ for (const building of buildingsToTouch) {
 			break;
 		}
 		else if (result === PolygonIntersection.CROSSING) {
-			console.println(`touching! ${candidate.get("SITEADRESS")}`);
+			//console.println(`touching! ${candidate.get("SITEADRESS")}`);
 			touchingParcels.push(candidate);
 		}
 	}
@@ -98,13 +98,15 @@ for (const building of buildingsToTouch) {
 		const streetName = tags["STREETNAME"];
 		const streetNameNoSpaces = streetName.replace(" ", "");
 		const streetType = tags["STREETTYPE"];
+		const suffixLetter = tags["SUFFIX"]; // N, W, E, S
 		const cacheKey = `${prefix} ${streetName} ${streetType}`;
 
 		const nameQueries = [
 			`name~"${prefix} ${streetName} ${streetType}"`,
 			`name~"${prefix} ${streetNameNoSpaces} ${streetType}"`,
 			`name~"${streetName} ${streetType}"`,
-			`name~"${streetNameNoSpaces} ${streetType}"`
+			`name~"${streetNameNoSpaces} ${streetType}"`,
+			`name:"${streetName} ${streetType} ${suffixLetter}"`,
 		];
 		let roadName = null;
 
@@ -121,13 +123,14 @@ for (const building of buildingsToTouch) {
 					}
 					return acc;
 				}, []);
+				//console.println(`${nameQuery}: ${matches}`);
 				if (matches.length === 1) {
 					roadName = matches[0];
 					streetCache.push({ parcel: cacheKey, osm: roadName });
 					break;
 				}
 				else if (matches.length > 1) {
-					//console.println(`multiple matches for ${nameQuery}! ${matches}`);
+					console.println(`multiple matches for ${nameQuery}! ${matches}`);
 				}
 				else {
 					//console.println(`no matches for ${nameQuery}`);
@@ -136,7 +139,7 @@ for (const building of buildingsToTouch) {
 		}
 
 		if (roadName === null) {
-			console.println(`!!! skipping`);
+			console.println(`!!! skipping, could not find a road.`);
 			continue;
 		};
 
