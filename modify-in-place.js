@@ -34,7 +34,7 @@ const candidateParcels = parcelData.searchWays(bigBBox);
 
 const buildingDataSetUtil = new DataSetUtil(activeDataSet);
 
-// find what city we're in.  This will likely break if working on the boundary.  Use an intersection test instead?  But then you'd get multiple matches.
+// find what city we're in.  This might break if working on the boundary.  Use an intersection test instead?  But then you'd get multiple matches.
 const cityMatches = buildingDataSetUtil.query("type:relation AND admin_level=8");
 
 const getParcelCity = way => {
@@ -101,6 +101,7 @@ for (const building of buildingsToTouch) {
 		const suffixLetter = tags["SUFFIX"]; // N, W, E, S
 		const cacheKey = `${prefix} ${streetName} ${streetType}`;
 
+		// Regular expressions (~) are used for case-insensitive exact matches.  ":" is a partial match.
 		const nameQueries = [
 			`name~"${prefix} ${streetName} ${streetType}"`,
 			`name~"${prefix} ${streetNameNoSpaces} ${streetType}"`,
