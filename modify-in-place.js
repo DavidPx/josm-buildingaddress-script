@@ -2,7 +2,7 @@ import josm from 'josm'
 import * as console from 'josm/scriptingconsole'
 import { DataSetUtil } from 'josm/ds'
 import { buildChangeCommand } from 'josm/command'
-import { lookupPrefix } from 'utility';
+import { lookupPrefix, findContainingWay } from 'utility';
 
 
 const OsmPrimitiveType = Java.type('org.openstreetmap.josm.data.osm.OsmPrimitiveType');
@@ -68,21 +68,9 @@ for (const building of buildingsToTouch) {
 	// Junk parcel data will overlap some buildings... find the parcel whose center is closest to the building's center
 	// I would prefer to figure out which parcel overlaps more area of the building but I can't figure out how to get the area of a java Area object
 	if (!goodParcel && touchingParcels.length > 0) {
-		//console.println(`looking for closest primitive from ${touchingParcels.map(x => x.get("SITEADRESS"))}`);
-		//goodParcel = Geometry.getClosestPrimitive(building, toArrayList(touchingParcels));
-		let minDist = -1;
-		const buildingCentroid = Geometry.getCentroid(building.getNodes());
-		
-		for (const tp of touchingParcels) {
-			//console.println(`${tp.get("SITEADRESS")}: ${Geometry.getCentroid(tp.getNodes())}`);
-			const parcelCentroid = Geometry.getCentroid(tp.getNodes());
-			const dist = parcelCentroid.distance(buildingCentroid);
-			//console.println(`${tp.get("SITEADRESS")} dist: ${dist}`);
-			if (dist < minDist || minDist === -1) {
-				minDist = dist;
-				goodParcel = tp;
-			}
-		}
+		console.println(`warning: a building overlaps two or more parcels; checkme=yes has been set`);
+		goodParcel = findContainingWay(building, touchingParcels);
+		building.put("checkme", "yes");
 	}
 
 	if (goodParcel) {
