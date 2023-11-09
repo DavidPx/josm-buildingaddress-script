@@ -51,6 +51,9 @@ outFields   *
 >:warning: It's likely that the data property names from your source will not exactly match what I have in my script!
 
 ## Workflows
+
+The script is `modify-in-place.js`.
+
 I use this script in two ways:
 - To set address information for buildings already saved in the OSM database
 - To both import the building outline and add address information to it
