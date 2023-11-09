@@ -1,4 +1,5 @@
 import josm from 'josm'
+import {assert} from 'josm/util';
 import * as console from 'josm/scriptingconsole'
 import { DataSetUtil } from 'josm/ds'
 import { buildChangeCommand } from 'josm/command'
@@ -16,9 +17,7 @@ const parcelLayer = josm.layers.get("V900_Wisconsin_Parcels_OZAUKEE.geojson");
 const activeDataSet = activeLayer.getDataSet();
 const selectedBuildings = activeDataSet.getAllSelected().toArray();
 
-if (selectedBuildings.length === 0) {
-	throw new Error("Nothing Selected");
-}
+assert(selectedBuildings.length > 0, "Nothing selected");
 
 const parcelData = parcelLayer.getDataSet();
 
@@ -43,9 +42,10 @@ const getParcelCity = way => {
 	return null;
 }
 
-const buildingsToTouch = selectedBuildings.filter(x => x.getType() == OsmPrimitiveType.WAY && x.isClosed() && !x.get("highway"));
+const buildingsToTouch = selectedBuildings.filter(x => x.getType() == OsmPrimitiveType.WAY && x.isClosed() && !x.get("highway") && !x.get("natural") && !x.get("landuse"));
 const touchedBuildings = [];
 const streetCache = [];
+const extraMessages = [];
 
 for (const building of buildingsToTouch) {
 
@@ -68,8 +68,8 @@ for (const building of buildingsToTouch) {
 	// Junk parcel data will overlap some buildings... find the parcel whose center is closest to the building's center
 	// I would prefer to figure out which parcel overlaps more area of the building but I can't figure out how to get the area of a java Area object
 	if (!goodParcel && touchingParcels.length > 0) {
-		console.println(`warning: a building overlaps two or more parcels; checkme=yes has been set`);
 		goodParcel = findContainingWay(building, touchingParcels);
+		extraMessages.push(`warning: ${goodParcel.get("SITEADDRESS")} overlapped ${touchingParcels.length} parcels; checkme=yes has been set`);
 		building.put("checkme", "yes");
 	}
 
@@ -77,10 +77,11 @@ for (const building of buildingsToTouch) {
 		const tags = goodParcel.getKeys();
 		const siteAddress = tags["SITEADRESS"];
 		if (!siteAddress) {
-			console.println(`parcel with no address!  skipping.  Building center is ${building.getBBox().getCenter()}`);
+			extraMessages.push(`parcel with no address!  skipping.  Building center is ${building.getBBox().getCenter()}.  checkme=yes has been set`);
+			building.put("checkme", "yes");
 			continue;
 		}
-		console.println(siteAddress);
+		//console.println(siteAddress);
 
 		const prefix = lookupPrefix(tags["PREFIX"]);
 		const streetName = tags["STREETNAME"];
@@ -119,7 +120,7 @@ for (const building of buildingsToTouch) {
 					break;
 				}
 				else if (matches.length > 1) {
-					console.println(`multiple matches for ${nameQuery}! ${matches}`);
+					//console.println(`multiple matches for ${nameQuery}! ${matches}`);
 				}
 				else {
 					//console.println(`no matches for ${nameQuery}`);
@@ -128,13 +129,14 @@ for (const building of buildingsToTouch) {
 		}
 
 		if (roadName === null) {
-			console.println(`!!! skipping, could not find a road.`);
+			extraMessages.push(`Could not find an OSM road for ${siteAddress}; checkme=yes has been set`);
+			building.put("checkme", "yes");
 			continue;
 		};
 
 		const cityName = getParcelCity(building);
 		if (!cityName) {
-			console.println(`Could not determine city; relationship needs to be downloaded`);
+			extraMessages.push(`Could not determine city for ${siteAddress}; relationship needs to be downloaded`);
 			continue;
 		}
 
@@ -157,6 +159,8 @@ for (const building of buildingsToTouch) {
 		building.remove("capture_dates_range");
 		building.remove("release");
 
+		building.remove("checkme");
+
 		touchedBuildings.push(building);
 	}
 
@@ -167,4 +171,10 @@ for (const building of buildingsToTouch) {
 activeDataSet.clearSelection();
 activeDataSet.setSelected(touchedBuildings);
 
-console.println(`Done!`);
+//console.println(`Done!`);
+if (touchedBuildings.length === buildingsToTouch.length) {
+	josm.alert(`All ${buildingsToTouch.length} buildings were addressed!`);
+}
+else {
+	josm.alert(`${touchedBuildings.length}/${buildingsToTouch.length} buildings addressed.  Problems:\n\n${extraMessages.join('\n')}`);
+}
