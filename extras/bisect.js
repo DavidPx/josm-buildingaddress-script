@@ -1,3 +1,25 @@
+/*
+    This script seeks to help cutting buildings in half along their long axis.
+
+    ---------------------
+    -                   -
+    -                   -
+    ---------------------
+
+    Would get turned into:
+
+    ---------------------
+    -         -         -
+    -         -         -
+    ---------------------
+
+    Pre-requisites - have utilsplugin2 installed it does the heavy lifting of making two ways based on nodes
+
+    1. Select Building
+    2. Run Script
+    3. Hit Alt+X (Split Object, part of utilsplugin2)
+
+*/
 import josm from 'josm'
 import * as console from 'josm/scriptingconsole'
 const Geometry = Java.type('org.openstreetmap.josm.tools.Geometry');
@@ -112,7 +134,7 @@ for (const way of buildingsToTouch) {
         way.addNode(ws.getUpperIndex(), node);
     }
 	
-    //activeDataSet.removePrimitive(bisectWay);
-    //activeDataSet.removePrimitives(bisectWay.getNodes());
+    // clear the working way
+    activeDataSet.removePrimitives([bisectWay, n1, n2]);
     activeDataSet.setSelected(intersections);
 }
